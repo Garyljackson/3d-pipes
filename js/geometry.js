@@ -29,6 +29,8 @@ export function createSphere(position, radius, material) {
  *
  * The pipe arrives at `position` traveling in `inDir` and leaves in `outDir`.
  * The arc spans from the entry face to the exit face of the cell.
+ *
+ * See elbow-explained.html for an interactive visual breakdown of the geometry.
  */
 export function createElbow(position, inDir, outDir, material) {
   const half = CONFIG.cellSize / 2;

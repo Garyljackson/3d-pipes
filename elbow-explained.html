@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>createElbow — Visual Breakdown</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #111; color: #ccc;
+    font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+    display: flex; height: 100vh;
+  }
+
+  #sidebar {
+    width: 340px; min-width: 340px; padding: 24px;
+    overflow-y: auto; border-right: 1px solid #333;
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  h1 { font-size: 16px; color: #fff; }
+  h2 { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  p, li { line-height: 1.6; color: #aaa; font-size: 12px; }
+  ul { padding-left: 16px; }
+  code { color: #7ec8e3; font-size: 12px; }
+
+  .step {
+    padding: 12px; border: 1px solid #333; border-radius: 4px;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .step:hover { border-color: #555; }
+  .step.active { border-color: #7ec8e3; background: rgba(126, 200, 227, 0.05); }
+  .step-title { font-size: 13px; color: #fff; font-weight: 600; margin-bottom: 4px; }
+  .step-desc { font-size: 11px; color: #888; line-height: 1.5; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #888; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  #canvas-container { flex: 1; position: relative; }
+  canvas { display: block; }
+
+  #hint {
+    position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+    color: #555; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div>
+    <h1>createElbow — Explained</h1>
+    <p>A visual breakdown of how the elbow pipe bend is built, step by step. Click each step below.</p>
+  </div>
+
+  <div>
+    <h2>Legend</h2>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#f77"></div> inDir (arrival)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#7f7"></div> outDir (exit)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#77f"></div> position (cell center)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ff0"></div> arcCenter</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#fa0"></div> sample points</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#fff"></div> final tube</div>
+    </div>
+  </div>
+
+  <div class="step active" data-step="0">
+    <div class="step-title">1. The Grid Cell</div>
+    <div class="step-desc">
+      We start with <code>position</code> — the center of the cell.
+      The pipe enters from the right (<code>inDir = +X</code>) and
+      exits upward (<code>outDir = +Y</code>).
+      The grey wireframe box shows the cell boundary.
+    </div>
+  </div>
+
+  <div class="step" data-step="1">
+    <div class="step-title">2. Find the Arc Center</div>
+    <div class="step-desc">
+      The bend pivots around the corner where the entry and exit faces meet:<br>
+      <code>arcCenter = position - inDir*half + outDir*half</code><br>
+      Step back along inDir, step forward along outDir.
+    </div>
+  </div>
+
+  <div class="step" data-step="2">
+    <div class="step-title">3. Sample the Quarter-Circle</div>
+    <div class="step-desc">
+      13 points are placed along a 90° arc from angle 0 to π/2.
+      Each point uses <code>cos</code> and <code>sin</code> to orbit
+      around the arc center in the plane defined by inDir and outDir.
+    </div>
+  </div>
+
+  <div class="step" data-step="3">
+    <div class="step-title">4. Smooth Curve</div>
+    <div class="step-desc">
+      The points are passed to <code>CatmullRomCurve3</code> which
+      creates a smooth spline through all of them. This is the
+      blue path the tube will follow.
+    </div>
+  </div>
+
+  <div class="step" data-step="4">
+    <div class="step-title">5. Final Tube</div>
+    <div class="step-desc">
+      <code>TubeGeometry</code> wraps a cylindrical mesh around the
+      curve with the configured pipe radius. This is the finished
+      elbow joint.
+    </div>
+  </div>
+</div>
+
+<div id="canvas-container">
+  <div id="hint">Click + drag to orbit</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  // ── Config ──
+  const cellSize = 2.0;
+  const half = cellSize / 2;
+  const pipeRadius = 0.3;
+
+  const position = new THREE.Vector3(0, 0, 0);
+  const inDir    = new THREE.Vector3(1, 0, 0);   // arriving from +X
+  const outDir   = new THREE.Vector3(0, 1, 0);   // exiting toward +Y
+
+  // ── Scene setup ──
+  const container = document.getElementById('canvas-container');
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x111111);
+
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+  camera.position.set(3, 3, 4);
+  camera.lookAt(0, 0, 0);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  container.appendChild(renderer.domElement);
+
+  // Lights
+  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  dirLight.position.set(5, 8, 6);
+  scene.add(dirLight);
+
+  // ── Orbit controls (minimal, inline) ──
+  let isDragging = false, prevMouse = { x: 0, y: 0 };
+  let spherical = { theta: Math.atan2(camera.position.x, camera.position.z),
+                    phi: Math.acos(camera.position.y / camera.position.length()),
+                    r: camera.position.length() };
+
+  renderer.domElement.addEventListener('mousedown', e => { isDragging = true; prevMouse = { x: e.clientX, y: e.clientY }; });
+  window.addEventListener('mouseup', () => isDragging = false);
+  window.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    spherical.theta -= (e.clientX - prevMouse.x) * 0.008;
+    spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi - (e.clientY - prevMouse.y) * 0.008));
+    prevMouse = { x: e.clientX, y: e.clientY };
+  });
+  renderer.domElement.addEventListener('wheel', e => {
+    spherical.r = Math.max(2, Math.min(10, spherical.r + e.deltaY * 0.005));
+  });
+
+  // ── Helper builders ──
+  function makeArrow(origin, dir, length, color) {
+    return new THREE.ArrowHelper(dir, origin, length, color, 0.15, 0.1);
+  }
+
+  function makeDot(pos, color, size) {
+    const geo = new THREE.SphereGeometry(size || 0.06, 10, 8);
+    const mat = new THREE.MeshBasicMaterial({ color });
+    const m = new THREE.Mesh(geo, mat);
+    m.position.copy(pos);
+    return m;
+  }
+
+  function makeLabel() {} // kept simple — dots + legend
+
+  // ── Compute elbow geometry data ──
+  const arcCenter = position.clone()
+    .addScaledVector(inDir, -half)
+    .addScaledVector(outDir, half);
+
+  const sampleCount = 12;
+  const samplePoints = [];
+  for (let i = 0; i <= sampleCount; i++) {
+    const angle = (i / sampleCount) * Math.PI / 2;
+    samplePoints.push(
+      arcCenter.clone()
+        .addScaledVector(outDir, -half * Math.cos(angle))
+        .addScaledVector(inDir, half * Math.sin(angle))
+    );
+  }
+
+  const curve = new THREE.CatmullRomCurve3(samplePoints);
+
+  // ── Build scene layers per step ──
+  const layers = [[], [], [], [], []];
+
+  // Step 1: Grid cell + position + direction arrows
+  const cellWire = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(cellSize, cellSize, cellSize)),
+    new THREE.LineBasicMaterial({ color: 0x444444 })
+  );
+  layers[0].push(cellWire);
+  layers[0].push(makeDot(position, 0x7777ff, 0.08));
+  layers[0].push(makeArrow(position.clone().addScaledVector(inDir, -half), inDir, cellSize * 0.6, 0xff7777));
+  layers[0].push(makeArrow(position, outDir, cellSize * 0.6, 0x77ff77));
+
+  // Step 2: Arc center
+  // Dashed line from position to arcCenter
+  const dashGeo = new THREE.BufferGeometry().setFromPoints([
+    position.clone().addScaledVector(inDir, -half),
+    arcCenter,
+    position.clone().addScaledVector(outDir, half)
+  ]);
+  const dashMat = new THREE.LineDashedMaterial({ color: 0xffff00, dashSize: 0.08, gapSize: 0.06 });
+  const dashLine = new THREE.Line(dashGeo, dashMat);
+  dashLine.computeLineDistances();
+  layers[1].push(dashLine);
+  layers[1].push(makeDot(arcCenter, 0xffff00, 0.1));
+
+  // Step 3: Sample points
+  samplePoints.forEach(p => layers[2].push(makeDot(p, 0xffaa00, 0.05)));
+  // Thin line connecting them
+  const sampleLineGeo = new THREE.BufferGeometry().setFromPoints(samplePoints);
+  layers[2].push(new THREE.Line(sampleLineGeo, new THREE.LineBasicMaterial({ color: 0x664400 })));
+
+  // Step 4: Smooth curve
+  const curvePoints = curve.getPoints(60);
+  const curveLineGeo = new THREE.BufferGeometry().setFromPoints(curvePoints);
+  layers[3].push(new THREE.Line(curveLineGeo, new THREE.LineBasicMaterial({ color: 0x4488ff, linewidth: 2 })));
+
+  // Step 5: Final tube
+  const tubeMat = new THREE.MeshPhongMaterial({ color: 0xcccccc, shininess: 60 });
+  const tubeGeo = new THREE.TubeGeometry(curve, 12, pipeRadius, 12, false);
+  layers[4].push(new THREE.Mesh(tubeGeo, tubeMat));
+
+  // Add all layers to scene, initially hidden per step
+  const groups = layers.map(items => {
+    const g = new THREE.Group();
+    items.forEach(i => g.add(i));
+    scene.add(g);
+    return g;
+  });
+
+  // ── Step switching ──
+  let currentStep = 0;
+  function setStep(step) {
+    currentStep = step;
+    groups.forEach((g, i) => g.visible = i <= step);
+    document.querySelectorAll('.step').forEach((el, i) => el.classList.toggle('active', i === step));
+  }
+  setStep(0);
+
+  document.querySelectorAll('.step').forEach(el => {
+    el.addEventListener('click', () => setStep(parseInt(el.dataset.step)));
+  });
+
+  // ── Resize ──
+  function resize() {
+    const w = container.clientWidth, h = container.clientHeight;
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ── Animate ──
+  function animate() {
+    requestAnimationFrame(animate);
+    camera.position.setFromSpherical(new THREE.Spherical(spherical.r, spherical.phi, spherical.theta));
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+  }
+  animate();
+})();
+</script>
+</body>
+</html>
